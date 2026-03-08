@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+.env.*
+.DS_Store
+
+# Local runtime artifacts
+*.lock
+downloaded_files/*.deb
+
+# Data artifacts
+data/raw/*.csv
+data/processed/*.csv
+
+# Trained model artifacts
+models/*.pkl
+models/*.joblib
+models/*.json
+
+# VS Code local state
+.vscode/
+.vscode/*.code-workspace
