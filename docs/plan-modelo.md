@@ -27,8 +27,8 @@ Por tanto, «no hay ventaja explotable» es un resultado posible y válido para 
 | Hallazgo | Consecuencia |
 |---|---|
 | `train_xgboost.py` no usa cuotas | No puede medir si se gana al mercado |
-| `rolling` no está agrupado por equipo tras `groupby().shift(1)` | **Error:** los primeros partidos de un equipo mezclan datos del equipo anterior |
-| División 70/15/15 por filas | Partidos de una misma fecha pueden caer a ambos lados |
+| `rolling` sin agrupar por equipo | **Corregido en la fase 0**, con test de regresión |
+| División 70/15/15 por filas | **Corregido en la fase 0:** ahora corta por día natural |
 | Solo 2 ligas y 2 temporadas | Muestra insuficiente |
 | La constitución describe BeSoccer y el código usa soccerdata | Documentación desfasada |
 
@@ -64,7 +64,7 @@ Además, la última fila de La Liga 2026/27 era del 2-nov al consultar el 6-nov.
 
 | Fuente | Estado | Uso |
 |---|---|---|
-| Understat | Responde **[comprobado]**; cobertura amplia solo en grandes ligas **[fuente]** | xG desde 2014/15 en las grandes ligas |
+| Understat | **En mantenimiento el 6-nov-2026:** responde HTTP 200 con la página «We will come back soon», fechada el 3-nov, también en sus URL de datos **[comprobado]**. Cobertura amplia solo en grandes ligas **[fuente]** | xG desde 2014/15 en las grandes ligas, cuando vuelva |
 | FBref | Perdió xG y métricas avanzadas de Opta en enero de 2026 **[fuente]** | No depender de ella. Ya bloqueaba `soccerdata` |
 | FotMob | Ofrece xG en muchas competiciones **[fuente]**; condiciones sin revisar | Candidata a evaluar |
 | StatsBomb Open Data | Solo competiciones seleccionadas **[fuente]** | Aprender eventos; no para producción |

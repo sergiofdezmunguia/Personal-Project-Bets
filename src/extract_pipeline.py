@@ -6,6 +6,7 @@ all outputs under data/raw.
 
 from __future__ import annotations
 
+import sys
 import traceback
 from pathlib import Path
 
@@ -27,6 +28,15 @@ def extract_understat(leagues: list[str], seasons: list[str]) -> dict[str, str]:
     schedule = understat.read_schedule()
     team_stats = understat.read_team_match_stats()
     players = understat.read_player_season_stats()
+
+    # Validate before writing: a bad response must not replace the previous CSVs.
+    expected = len(leagues) * len(seasons)
+    for name, df in [("schedule", schedule), ("team_stats", team_stats)]:
+        if "game_id" not in df.columns:
+            raise ValueError(f"Understat returned no {name} data.")
+        found = df.index.droplevel("game").nunique()
+        if found != expected:
+            raise ValueError(f"Understat {name} has {found} league-seasons, expected {expected}.")
 
     save_csv(schedule, RAW_DATA_DIR / "understat_schedule.csv")
     save_csv(team_stats, RAW_DATA_DIR / "understat_team_match_stats.csv")
@@ -75,6 +85,10 @@ def main() -> None:
     print("\n=== Summary ===")
     for source_name, info in summary.items():
         print(f"- {source_name}: {info}")
+
+    # Understat feeds the model; ClubElo is optional, so only Understat is fatal.
+    if summary["understat"]["status"] != "ok":
+        sys.exit(1)
 
 
 if __name__ == "__main__":
