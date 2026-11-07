@@ -12,8 +12,28 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
+from xgboost import XGBClassifier
 
-from src.config import MODELS_DIR, RAW_DATA_DIR
+from src.config import FINAL_TEST_START, MODELS_DIR, RAW_DATA_DIR
+
+ROLLING_WINDOW = 5
+MIN_PRIOR_MATCHES = 3
+
+FEATURE_COLS = [
+    "home_xg_for_roll5",
+    "home_xg_against_roll5",
+    "home_points_roll5",
+    "home_ppda_roll5",
+    "home_deep_comp_roll5",
+    "away_xg_for_roll5",
+    "away_xg_against_roll5",
+    "away_points_roll5",
+    "away_ppda_roll5",
+    "away_deep_comp_roll5",
+    "roll_xg_for_diff",
+    "roll_points_diff",
+    "roll_ppda_diff",
+]
 
 
 @dataclass
@@ -63,7 +83,8 @@ def prepare_base_table(schedule: pd.DataFrame, team_stats: pd.DataFrame) -> pd.D
         "home_goals",
         "away_goals",
     ]
-    model_df = schedule[key_cols].copy()
+    # Without has_data, xG is a placeholder 0 that would distort the form of both teams.
+    model_df = schedule.loc[schedule["has_data"], key_cols].copy()
 
     model_df["total_goals"] = model_df["home_goals"] + model_df["away_goals"]
     model_df["target_over_2_5"] = (model_df["total_goals"] > 2.5).astype(int)
@@ -80,7 +101,7 @@ def prepare_base_table(schedule: pd.DataFrame, team_stats: pd.DataFrame) -> pd.D
     return merged
 
 
-def build_team_form_features(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
+def build_team_form_features(df: pd.DataFrame) -> pd.DataFrame:
     home_view = pd.DataFrame(
         {
             "league_id": df["league_id"],
@@ -118,8 +139,10 @@ def build_team_form_features(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
 
     metrics = ["xg_for", "xg_against", "points", "ppda", "deep_comp"]
     for metric in metrics:
-        long_df[f"{metric}_roll{window}"] = (
-            long_df.groupby("team")[metric].shift(1).rolling(window, min_periods=3).mean()
+        # shift + rolling must both run inside each team, or a team's first matches
+        # average the previous team's last ones.
+        long_df[f"{metric}_roll5"] = long_df.groupby("team")[metric].transform(
+            lambda s: s.shift(1).rolling(ROLLING_WINDOW, min_periods=MIN_PRIOR_MATCHES).mean()
         )
 
     keep_cols = [
@@ -167,66 +190,68 @@ def build_team_form_features(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
     return out
 
 
+def reject_final_test_data(df: pd.DataFrame) -> None:
+    if (df["date"] >= FINAL_TEST_START).any():
+        raise ValueError(
+            f"Data from {FINAL_TEST_START.date()} onwards is the final test set: "
+            "it stays untouched until the model is frozen."
+        )
+
+
+def split_by_date(
+    df: pd.DataFrame, train_frac: float = 0.70, valid_frac: float = 0.15
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Split by calendar day, so all the matches of a day fall on the same side.
+
+    Fractions are approximate: they round down to the last whole day that fits.
+    """
+    reject_final_test_data(df)
+    match_day = df["date"].dt.normalize()
+    share = match_day.value_counts().sort_index().cumsum() / len(df)
+
+    train_end = share[share <= train_frac].index.max()
+    valid_end = share[share <= train_frac + valid_frac].index.max()
+
+    train = df[match_day <= train_end]
+    valid = df[(match_day > train_end) & (match_day <= valid_end)]
+    test = df[match_day > valid_end]
+
+    if train.empty or valid.empty or test.empty:
+        raise ValueError("Not enough match days to build train, valid and test splits.")
+    return train, valid, test
+
+
 def temporal_split(df: pd.DataFrame) -> DatasetBundle:
-    df = df.sort_values("date").reset_index(drop=True)
+    """Build the development splits. Their `test` is not the final test season."""
+    # Check before dropna: a final-test row with missing features must also stop the run.
+    reject_final_test_data(df)
 
-    feature_cols = [
-        "home_xg_for_roll5",
-        "home_xg_against_roll5",
-        "home_points_roll5",
-        "home_ppda_roll5",
-        "home_deep_comp_roll5",
-        "away_xg_for_roll5",
-        "away_xg_against_roll5",
-        "away_points_roll5",
-        "away_ppda_roll5",
-        "away_deep_comp_roll5",
-        "roll_xg_for_diff",
-        "roll_points_diff",
-        "roll_ppda_diff",
-    ]
-
-    data = df.dropna(subset=feature_cols + ["target_over_2_5"]).copy()
-
-    # 70/15/15 temporal split by row order after sorting by date.
-    n = len(data)
-    i_train = int(n * 0.70)
-    i_valid = int(n * 0.85)
-
-    train = data.iloc[:i_train]
-    valid = data.iloc[i_train:i_valid]
-    test = data.iloc[i_valid:]
+    data = df.dropna(subset=FEATURE_COLS + ["target_over_2_5"]).sort_values("date")
+    train, valid, test = split_by_date(data)
 
     return DatasetBundle(
-        train_x=train[feature_cols],
+        train_x=train[FEATURE_COLS],
         train_y=train["target_over_2_5"],
-        valid_x=valid[feature_cols],
+        valid_x=valid[FEATURE_COLS],
         valid_y=valid["target_over_2_5"],
-        test_x=test[feature_cols],
+        test_x=test[FEATURE_COLS],
         test_y=test["target_over_2_5"],
     )
 
 
 def train_model(bundle: DatasetBundle):
-    # Prefer XGBoost when available; fallback keeps script runnable.
-    try:
-        from xgboost import XGBClassifier
-
-        model = XGBClassifier(
-            n_estimators=300,
-            max_depth=4,
-            learning_rate=0.05,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            random_state=42,
-            objective="binary:logistic",
-            eval_metric="logloss",
-        )
-    except Exception:
-        from sklearn.ensemble import HistGradientBoostingClassifier
-
-        model = HistGradientBoostingClassifier(random_state=42)
-
+    model = XGBClassifier(
+        n_estimators=300,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        random_state=42,
+        objective="binary:logistic",
+        eval_metric="logloss",
+        # All cores took 53 s vs 0.04 s on a 22-core WSL, with identical predictions.
+        n_jobs=4,
+    )
     model.fit(bundle.train_x, bundle.train_y)
     return model
 
@@ -247,7 +272,7 @@ def evaluate(model, x: pd.DataFrame, y: pd.Series, split_name: str) -> dict[str,
 def main() -> None:
     schedule, team_stats = load_raw_inputs()
     base_df = prepare_base_table(schedule, team_stats)
-    feat_df = build_team_form_features(base_df, window=5)
+    feat_df = build_team_form_features(base_df)
     bundle = temporal_split(feat_df)
 
     model = train_model(bundle)

@@ -46,11 +46,24 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Usa Python 3.11. `requirements.txt` fija las versiones exactas. Para cambiarlas, edita
+`requirements.in` y ejecuta `uv pip compile requirements.in -o requirements.txt --python-version 3.11`.
+
+Comprueba la instalación. Los tests no usan la red:
+
+```bash
+python -m pytest
+```
+
 3. Extraer datos base:
 
 ```bash
 python -m src.extract_pipeline
 ```
+
+El comando termina con error si Understat falla o no devuelve todas las ligas y temporadas, y entonces
+no sustituye los CSV anteriores. soccerdata puede guardar en su caché una respuesta errónea: si
+Understat vuelve y la extracción sigue fallando, borra los `.json` de `~/soccerdata/data/Understat/`.
 
 4. Entrenar baseline ML (Over 2.5):
 
@@ -66,7 +79,7 @@ python -m src.explore_soccerdata
 
 ## Estado actual recomendado para push
 
-- Codigo de extraccion operativo: Understat y ClubElo
+- Extraccion: Understat en mantenimiento y ClubElo sin responder (comprobado en noviembre de 2026)
 - Codigo de entrenamiento baseline operativo: `src/train_xgboost.py`
 - Scripts antiguos movidos a `archive/scripts/`
 - `gitignore` ajustado para no subir entornos, datos crudos, binarios y locks

@@ -1,0 +1,11 @@
+pandas
+numpy
+scikit-learn
+xgboost
+soccerdata
+python-dotenv
+jupyter
+matplotlib
+seaborn
+joblib
+pytest
