@@ -198,3 +198,33 @@ Probabilidad media prevista → frecuencia observada, tramos de 0,1 («—»: me
 - **CatBoost:** Δ +0.0155, peor que el cierre (IC entero por encima de 0); frente a la apertura Δ +0.0127, peor que la apertura (IC entero por encima de 0). Por temporadas frente a la apertura: mejor en 0 de 8, peor en 8.
 - **Residuo sobre apertura, LightGBM:** Δ +0.0027, peor que el cierre (IC entero por encima de 0); frente a la apertura Δ -0.0001, **mejor que la apertura: sospechoso hasta auditarlo**. Por temporadas frente a la apertura: mejor en 2 de 8, peor en 0.
 - **Residuo sobre apertura, logit:** Δ +0.0027, peor que el cierre (IC entero por encima de 0); frente a la apertura Δ -0.0001, indistinguible de la apertura con esta muestra. Por temporadas frente a la apertura: mejor en 0 de 8, peor en 0.
+
+## Auditoría (`backtest-auditor`, 2026-11-15) y conclusión
+
+*Sección escrita a mano tras generar el informe; las cifras de esta sección son comprobaciones del
+auditor, no evaluaciones registradas.*
+
+- **Ronda 1, sobre el código: aprobado con reservas, sin fugas.** Con datos reales, alterar los
+  resultados desde un día c no cambia ninguna variable con ancla ≤ c. Con el objetivo barajado
+  desaparece toda ventaja, y una variable futura con ruido se detecta (Δ −0,05). Reservas corregidas:
+  el inicio de Elo/pi en la primera temporada (heredado de la fase 2, que se reevaluó), tests de
+  frontera del ancla, una rejilla que caía en el borde (ronda 2 en las temporadas de ajuste) y esta
+  tabla sin Navidad.
+- **Ronda 2, sobre el resultado: la mejora del residuo LightGBM sobre la apertura (−0,0001) se
+  rechaza como ventaja.** No es una fuga: gana algo más justo los martes y viernes, cuando el ancla es
+  el día del partido, y es peor en los 239 partidos con un partido intermedio. Pero:
+  - la propia apertura normalizada con el método de Shin, sin ningún modelo, ya mejora igual a la
+    proporcional (−0,00017 [−0,00032, −0,00002]);
+  - **frente a la apertura con Shin, el residuo queda en +0,00003 [−0,00010, +0,00017]**;
+  - quitando el 1 % de partidos más favorables pasa a ser peor que la apertura (+0,00004).
+
+  Lo que corrige es el reparto del margen entre favorito y sorpresa que hace mal la normalización
+  proporcional, no información nueva. Su correlación con el movimiento apertura→cierre (+0,04/+0,05)
+  crece con los días que faltan para el partido: el mercado se acerca poco a poco a ratings ya
+  públicos. Es una pista para la fase 4 (CLV), no un beneficio: una corrección media de 0,1 puntos
+  de probabilidad no compensa un margen del 3 %.
+
+**Conclusión.** Ningún modelo de la fase 3 gana al cierre de Pinnacle; tampoco a la apertura, una vez
+normalizada con Shin. Los árboles sin cuotas mejoran a Dixon-Coles (Δ frente al cierre +0,0147 frente a
++0,0190), pero siguen lejos del mercado. Siguiente paso: usar Shin o potencia como normalización de
+referencia (variante registrada) y medir CLV con cuotas propias con marca de tiempo (fase 4).

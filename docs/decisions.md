@@ -12,16 +12,46 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
   de datos de la fase 1 y la primera ejecución con datos reales.
 - **Renombres de equipos (fase 1):** `team_id` ya existe (ver 2026-11-14); falta revisar si algún
   club cambió de nombre en football-data entre 2012 y 2026.
-- **Hora de decisión (antes de las fases 3 y 4):** `shift(1)` da por conocido el partido anterior y su
-  xG. Decidiendo en T-48 h, con poco descanso entre partidos, ese partido aún no se habría jugado.
-- **Registro de experimentos en `train_xgboost.py`:** el registro ya existe (ver 2026-11-15), pero el
-  script antiguo sigue sobrescribiendo su JSON. Conectarlo al registro cuando se rehaga en la fase 3.
-- **Normalización del margen:** la referencia usa la proporcional. Probar Shin o potencia como
-  variantes registradas antes de calcular CLV en la fase 4.
+- **Hora de decisión (fase 4):** resuelta para el histórico en la fase 3 (anclas de saque y apertura,
+  ver 2026-11-15). Falta fijarla con cuotas propias con marca de tiempo.
+- **Registro de experimentos en `train_xgboost.py`:** la fase 3 usa `scripts/fase3_ml.py`, que sí
+  registra. El script antiguo sigue sin conectar: retirarlo o archivarlo.
+- **Normalización del margen (prioritaria tras la fase 3):** la referencia usa la proporcional, y la
+  auditoría de la fase 3 vio que Shin mejora la apertura tanto como el mejor residuo. Probar Shin o
+  potencia como variantes registradas antes de calcular CLV en la fase 4.
 - **Forma entre temporadas:** la ventana cruza temporadas, así que un equipo que vuelve tras un año
   usa partidos de hace dos temporadas. No es una fuga, pero está sin evaluar.
 
 ## Tomadas
+
+### 2026-11-15: fase 3, ML y residuos sobre la apertura
+
+- **Dos horas de decisión.** *Saque*: el partido del día D ve los resultados de días < D (como la fase
+  2). *Apertura*: football-data recoge las cuotas previas «el viernes por la tarde para los partidos de
+  fin de semana y el martes por la tarde para los de entre semana» (notes.txt). El ancla es el martes
+  para mar–jue y el viernes para vie–lun, y se ven los resultados de días < ancla. `run_online` y
+  Dixon-Coles aceptan el ancla; con la de la fase 2 el resultado es idéntico. **Motivo:** el modelo de
+  residuos usa la apertura y no puede saber nada que la apertura no supiera.
+- **Modelos.** LightGBM y CatBoost (saque, sin cuotas) sobre Elo, pi, Dixon-Coles, forma 5/20 por
+  equipo, descanso y liga. Residuos sobre la apertura (LightGBM con `init_score` y softmax con
+  desplazamiento L2). Un modelo por temporada entrenado con 2013/14…S−1. Ajuste en 2014/15–2016/17
+  (2013/14 solo entrena), en dos rondas registradas: la segunda, solo hacia menos complejidad, porque
+  la primera elegía el borde. Evaluación registrada una vez, en 2017/18–2024/25.
+- **El calendario es público.** El descanso usa las fechas de los partidos anteriores aunque sean
+  posteriores al ancla: las fechas se conocen de antemano.
+- **Navidad.** Del 20-dic al 5-ene football-data recoge la apertura antes del ancla supuesta (lo
+  detectó la auditoría). Se informa una tabla de sensibilidad sin esas jornadas; en la fase 4 la hora
+  la darán las cuotas propias.
+- **Corrección heredada de la fase 2.** En la primera temporada de cada liga, los equipos que debutan
+  tarde ya no heredan la media del día menos el desplazamiento, sino el valor de su categoría. La fase 2
+  se reevaluó (Elo y pi cambian como mucho 0,0001 de log loss) y conserva su selección de
+  hiperparámetros.
+- **Resultado (auditado):** nada gana al cierre. LightGBM +0,0147 [+0,0128, +0,0167], CatBoost +0,0155
+  y residuos +0,0027. El residuo LightGBM mejora la apertura proporcional en −0,0001, pero no la
+  apertura con Shin (+0,00003 [−0,00010, +0,00017]). Ver `docs/ml.md`. **Motivo para documentarlo
+  así:** la mejora sale de la normalización, no de las variables.
+- **Siguiente:** Shin o potencia como normalización de referencia (pasa a ser prioritaria) y CLV con
+  cuotas propias.
 
 ### 2026-11-15: fase 2, modelos de referencia y su validación
 
