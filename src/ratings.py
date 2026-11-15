@@ -118,8 +118,14 @@ def check_input(df: pd.DataFrame, final_test_from: pd.Timestamp | None = None) -
         raise ValueError("Los partidos deben venir ordenados por fecha")
 
 
-def run_online(df: pd.DataFrame, model) -> np.ndarray:
-    """Variable previa al partido para cada fila de `df` (mismo orden). Solo usa días anteriores."""
+def run_online(df: pd.DataFrame, model, anchor=None, return_states: bool = False):
+    """Variable previa al partido para cada fila de `df` (mismo orden). Solo usa días anteriores.
+
+    `anchor` (fase 3) fija la hora de decisión: una función que recibe la fecha de cada partido
+    (Series) y devuelve la fecha de corte, con anchor(D) ≤ D y no decreciente. El partido del día D
+    solo ve resultados de días < anchor(D). Por defecto anchor(D) = D (antes del saque inicial, el
+    criterio de la fase 2). Con `return_states` devuelve también el estado de cada equipo usado.
+    """
     check_input(df)
     state: dict[str, np.ndarray] = {}
     last_league: dict[str, str] = {}
@@ -127,6 +133,8 @@ def run_online(df: pd.DataFrame, model) -> np.ndarray:
     snapshot: dict[str, dict[str, np.ndarray]] = {}  # temporada -> media por liga al empezar
     seen_seasons: set[str] = set()
     feat = np.empty(len(df))
+    h_states = np.empty((len(df), model.size))
+    a_states = np.empty((len(df), model.size))
 
     def league_means() -> dict[str, np.ndarray]:
         groups: dict[str, list[np.ndarray]] = {}
@@ -134,15 +142,30 @@ def run_online(df: pd.DataFrame, model) -> np.ndarray:
             groups.setdefault(lg, []).append(state[t])
         return {lg: np.mean(v, axis=0) for lg, v in groups.items()}
 
+    def apply(day_rows) -> None:  # resultados de un día, partiendo todos del estado previo
+        new = {}
+        for _, _, league, home, away, hg, ag in day_rows:
+            h, a = model.update(new.get(home, state[home]), new.get(away, state[away]), int(hg), int(ag))
+            new[home], new[away] = h, a
+            last_league[home] = last_league[away] = league
+        state.update(new)
+
     cols = df[["date", "season", "league", "home_team_id", "away_team_id", "home_goals", "away_goals"]]
     rows = list(cols.itertuples(index=False, name=None))
     dates = df["date"].to_numpy()
+    cut = df["date"] if anchor is None else pd.Series(anchor(df["date"]), index=df.index)
+    cuts = pd.to_datetime(cut).to_numpy()
+    if (cuts > dates).any() or not pd.Series(cuts).is_monotonic_increasing:
+        raise ValueError("El ancla debe cumplir anchor(D) ≤ D y no decrecer")
+    pending: list[tuple[np.datetime64, list]] = []  # días jugados aún no visibles
     start = 0
     while start < len(rows):
         end = start
         while end < len(rows) and dates[end] == dates[start]:
             end += 1
         day = rows[start:end]
+        while pending and pending[0][0] < cuts[start]:  # 0) se hacen visibles los días < ancla
+            apply(pending.pop(0)[1])
         for season in {r[1] for r in day} - seen_seasons:  # primera vez que aparece la temporada
             snapshot[season] = league_means()
             seen_seasons.add(season)
@@ -157,18 +180,14 @@ def run_online(df: pd.DataFrame, model) -> np.ndarray:
                     if m is not None:
                         state[team] = m + (1 - model.season_regress) * (state[team] - m)
                 last_season[team] = season
-        # 2) predicción de todos los partidos del día con el estado previo
+        # 2) predicción de todos los partidos del día con el estado visible
         for i, (_, _, _, home, away, _, _) in enumerate(day):
             feat[start + i] = model.feature(state[home], state[away])
-        # 3) actualización con los resultados del día, partiendo todos del estado previo
-        new = {}
-        for _, _, league, home, away, hg, ag in day:
-            h, a = model.update(new.get(home, state[home]), new.get(away, state[away]), int(hg), int(ag))
-            new[home], new[away] = h, a
-            last_league[home] = last_league[away] = league
-        state.update(new)
+            h_states[start + i], a_states[start + i] = state[home], state[away]
+        # 3) los resultados del día quedan pendientes hasta que el ancla los deje ver
+        pending.append((dates[start], day))
         start = end
-    return feat
+    return (feat, h_states, a_states) if return_states else feat
 
 
 # ----------------------------------------------------------------------------- rating → 1X2

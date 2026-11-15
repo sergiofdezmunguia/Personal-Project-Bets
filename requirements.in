@@ -9,3 +9,5 @@ matplotlib
 seaborn
 joblib
 pytest
+lightgbm
+catboost
