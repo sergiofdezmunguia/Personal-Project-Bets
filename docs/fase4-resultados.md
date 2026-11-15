@@ -49,22 +49,27 @@ apertura que reciben (como desplazamiento y como variable).
 | 2023/24 | 3316 | +0.00033 [-0.00041, +0.00101] | +0.00035 [-0.00034, +0.00095] | -0.00005 [-0.00034, +0.00023] | -0.00005 [-0.00034, +0.00020] | -0.00009 [-0.00025, +0.00008] | -0.00013 [-0.00030, +0.00004] |
 | 2024/25 | 3318 | +0.00044 [-0.00018, +0.00105] | +0.00041 [-0.00022, +0.00101] | -0.00003 [-0.00027, +0.00020] | -0.00010 [-0.00042, +0.00018] | -0.00008 [-0.00020, +0.00005] | -0.00017 [-0.00037, +0.00001] |
 
-### Robustez: quitar el 1 % de partidos más favorables
+### Robustez: recortes de la Δ partido a partido
 
-| Modelo | Δ vs Apertura, potencia | Δ sin el 1 % más favorable |
-|---|---|---|
-| Cierre, proporcional | -0.00262 | +0.00027 |
-| Cierre, Shin | -0.00278 | -0.00004 |
-| Cierre, potencia | -0.00280 | -0.00009 |
-| Apertura, proporcional | +0.00018 | +0.00121 |
-| Apertura, Shin | +0.00001 | +0.00039 |
-| Dixon-Coles (ancla de apertura) | +0.01631 | +0.02224 |
-| Residuo LightGBM, proporcional | +0.00004 | +0.00097 |
-| Residuo logit, proporcional | +0.00008 | +0.00095 |
-| Residuo LightGBM, Shin | -0.00007 | +0.00030 |
-| Residuo logit, Shin | -0.00003 | +0.00040 |
-| Residuo LightGBM, potencia | -0.00008 | +0.00014 |
-| Residuo logit, potencia | -0.00005 | +0.00019 |
+*Tabla regenerada tras la auditoría con `scripts/fase4_margen_clv.py robustez` (mismas predicciones,
+deterministas; no se registra). La versión original solo quitaba el 1 % más favorable, un estadístico
+sesgado con colas gruesas.* El recorte asimétrico solo indica fragilidad si queda **por encima** de su
+valor bajo un nulo de signo aleatorio (200 permutaciones).
+
+| Modelo | Δ vs Apertura, potencia | Δ recortada (0,5 % por cola) | Δ sin el 1 % más favorable | Lo mismo bajo el nulo |
+|---|---|---|---|---|
+| Cierre, proporcional | -0.00262 | -0.00246 | +0.00027 | +0.00277 |
+| Cierre, Shin | -0.00278 | -0.00282 | -0.00004 | +0.00280 |
+| Cierre, potencia | -0.00280 | -0.00290 | -0.00009 | +0.00280 |
+| Apertura, proporcional | +0.00018 | +0.00066 | +0.00121 | +0.00079 |
+| Apertura, Shin | +0.00001 | +0.00020 | +0.00039 | +0.00027 |
+| Dixon-Coles (ancla de apertura) | +0.01631 | +0.01683 | +0.02224 | +0.00554 |
+| Residuo LightGBM, proporcional | +0.00004 | +0.00047 | +0.00097 | +0.00069 |
+| Residuo logit, proporcional | +0.00008 | +0.00048 | +0.00095 | +0.00066 |
+| Residuo LightGBM, Shin | -0.00007 | +0.00005 | +0.00030 | +0.00030 |
+| Residuo logit, Shin | -0.00003 | +0.00010 | +0.00040 | +0.00036 |
+| Residuo LightGBM, potencia | -0.00008 | -0.00009 | +0.00014 | +0.00024 |
+| Residuo logit, potencia | -0.00005 | -0.00009 | +0.00019 | +0.00029 |
 
 ## CLV histórico de apuestas simuladas a la apertura de Pinnacle
 
@@ -72,7 +77,7 @@ Una apuesta plana por partido, al resultado de mayor valor esperado p_modelo · 
 si supera el umbral. CLV = cuota tomada · p_cierre sin margen − 1. Pinnacle no opera en España:
 es una medida de calidad del precio, no una estrategia ejecutable. Sin comisión (casa, no exchange).
 
-| Modelo | Umbral | Apuestas | CLV (cierre potencia) [IC 95 %] | CLV sin el 1 % mejor | % CLV > 0 | CLV (cierre proporcional) | ROI plano [IC 95 %] |
+| Modelo | Umbral | Apuestas | CLV (cierre potencia) [IC 95 %] | CLV sin el 1 % mejor (versión original; con n = 13 quita 1 apuesta) | % CLV > 0 | CLV (cierre proporcional) | ROI plano [IC 95 %] |
 |---|---|---|---|---|---|---|---|
 | Residuo LightGBM, potencia | 0% | 13 | -0.0144 [-0.0552, +0.0205] | -0.0267 | 38.5% | -0.0167 | -0.3277 [-0.8740, +0.3884] |
 | Residuo LightGBM, potencia | 2% | 0 | — | — | — | — | — |
