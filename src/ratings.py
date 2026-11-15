@@ -132,6 +132,7 @@ def run_online(df: pd.DataFrame, model, anchor=None, return_states: bool = False
     last_season: dict[str, str] = {}
     snapshot: dict[str, dict[str, np.ndarray]] = {}  # temporada -> media por liga al empezar
     seen_seasons: set[str] = set()
+    league_first: dict[str, str] = {}  # primera temporada de cada liga en los datos
     feat = np.empty(len(df))
     h_states = np.empty((len(df), model.size))
     a_states = np.empty((len(df), model.size))
@@ -173,8 +174,11 @@ def run_online(df: pd.DataFrame, model, anchor=None, return_states: bool = False
         for _, season, league, home, away, _, _ in day:
             for team in (home, away):
                 if team not in state:
+                    # en la primera temporada de la liga aún no hay media fiable: valor por categoría
                     means = league_means()
-                    state[team] = model.newcomer(means[league]) if league in means else model.initial(league)
+                    first = league_first.setdefault(league, season)
+                    use_mean = league in means and season > first
+                    state[team] = model.newcomer(means[league]) if use_mean else model.initial(league)
                 elif last_season[team] != season and model.season_regress:
                     m = snapshot[season].get(last_league[team])
                     if m is not None:

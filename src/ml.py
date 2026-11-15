@@ -154,6 +154,8 @@ def walk_forward(df: pd.DataFrame, X: pd.DataFrame, variant: str, params: dict, 
                  train_from: str = TRAIN_FROM) -> pd.DataFrame:  # fmt: skip
     """Probabilidades de `variant` para las temporadas pedidas; un modelo por temporada entrenado
     solo con temporadas anteriores."""
+    if not X.index.equals(df.index):
+        raise ValueError("Las variables deben estar alineadas con df (mismo índice y orden)")
     y = outcome_index(df["result"])
     season = df["season"].to_numpy()
     ok = usable(variant, X)

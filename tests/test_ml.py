@@ -208,31 +208,79 @@ def test_model_predictions_only_use_the_past(df, variant):
                          df, ml.DECISION[variant], c)  # fmt: skip
 
 
-@pytest.mark.parametrize("variant", list(ml.DECISION))
-def test_predictions_ignore_closing_odds(df, variant):
+def assert_ignores_closing_odds(fn, df):
+    """`fn(df)` → predicciones. Alterar cierres y referencias no puede cambiar nada."""
     alt = df.copy()
     rng = np.random.default_rng(1)
     for c in [c for c in df.columns if "close" in c or c.startswith("ref_")]:
         alt[c] = alt[c] * rng.uniform(0.5, 2, len(alt))
-    a, b = predictions(df, variant), predictions(alt, variant)
-    np.testing.assert_allclose(a.to_numpy(float), b.to_numpy(float), equal_nan=True)
+    np.testing.assert_allclose(fn(df).to_numpy(float), fn(alt).to_numpy(float), equal_nan=True)
+
+
+@pytest.mark.parametrize("variant", list(ml.DECISION))
+def test_predictions_ignore_closing_odds(df, variant):
+    assert_ignores_closing_odds(lambda d: predictions(d, variant), df)
 
 
 def test_closing_odds_mutant_is_caught(df):
-    """Mutante: el cierre de Pinnacle, renombrado para burlar el filtro por nombre, como variable."""
+    """Mutante: el cierre de Pinnacle, renombrado para burlar el filtro por nombre, como variable.
+    La misma comprobación que pasan los modelos reales debe fallar."""
 
-    def leaky_fit(variant, params, X_tr, y_tr, X_te):
-        X_tr, X_te = X_tr.copy(), X_te.copy()
-        X_tr["x"], X_te["x"] = df.loc[X_tr.index, "pin_close_home"], cur.loc[X_te.index, "pin_close_home"]
-        return ml.fit_predict(variant, params, X_tr, y_tr, X_te)
+    def leaky(d):
+        X = build(d, "saque").assign(x=d["pin_close_home"])
+        return walk(d, X, "lgbm", SMALL["lgbm"], ml.fit_predict)
 
-    alt = df.copy()
-    alt["pin_close_home"] *= np.random.default_rng(2).uniform(0.5, 2, len(alt))
-    cur = df
-    a = predictions(df, "lgbm", fit=leaky_fit)
-    cur = alt
-    b = predictions(alt, "lgbm", fit=leaky_fit)
-    assert not np.allclose(a.to_numpy(float), b.to_numpy(float), equal_nan=True)
+    with pytest.raises(AssertionError):
+        assert_ignores_closing_odds(leaky, df)
+
+
+def test_walk_forward_rejects_misaligned_features(df):
+    X = build(df, "saque")
+    with pytest.raises(ValueError, match="alineadas"):
+        ml.walk_forward(df, X.iloc[::-1], "lgbm", SMALL["lgbm"], ["2014/15"])
+
+
+@pytest.fixture(scope="module")
+def df3():
+    return with_market(synthetic(step_days=3))  # jornadas cada 3 días: hay casos viernes → lunes
+
+
+def every_day(df, season="2014/15"):
+    return [pd.Timestamp(x) for x in np.sort(df.loc[df["season"] == season, "date"].unique())]
+
+
+def test_opening_features_on_every_cut_of_a_season(df3):
+    """Todos los cortes de una temporada, incluidos los que caen entre el ancla y el partido."""
+    lagged = 0
+    for c in every_day(df3):
+        m = assert_unchanged(lambda d: build(d, "apertura"), df3, "apertura", c)
+        lagged += int((m & (df3["date"] > c).to_numpy()).sum())
+    assert lagged > 0
+
+
+def test_anchor_off_by_one_day_is_caught(df3, monkeypatch):
+    """Mutante: ve también los partidos del propio día del ancla (`<` cambiado por `<=`)."""
+    plus = lambda d: pd.concat([ft.opening_anchor(d) + pd.Timedelta(days=1), d], axis=1).min(axis=1)  # noqa: E731
+    monkeypatch.setitem(ft.ANCHORS, "apertura", plus)
+    monkeypatch.setitem(ft.DC_ANCHORS, "apertura", plus)
+    base = build(df3, "apertura")
+    with pytest.raises(AssertionError):
+        for c in every_day(df3):
+            alt = build(scramble(df3, c), "apertura")
+            m = (ft.opening_anchor(df3["date"]) <= c).to_numpy() & base.notna().any(axis=1).to_numpy()
+            np.testing.assert_allclose(alt.to_numpy(float)[m], base.to_numpy(float)[m], atol=1e-9)
+
+
+def test_first_season_teams_start_from_their_tier():
+    """En la primera temporada de una liga, un equipo que debuta tarde no hereda la media del día."""
+    from src.ratings import Elo, run_online
+
+    rows = [("2012-08-10", "E1", "a", "b", 3, 0), ("2012-08-17", "E1", "c", "d", 0, 0),
+            ("2012-08-24", "E1", "a", "c", 1, 1)]  # fmt: skip
+    d = pd.DataFrame(rows, columns=["date", "league", "home_team_id", "away_team_id", "home_goals", "away_goals"])
+    d["date"], d["season"] = pd.to_datetime(d["date"]), "2012/13"
+    _, h, a = run_online(d, Elo(), return_states=True)
+    assert h[1, 0] == a[1, 0] == Elo().initial("E1")[0]
 
 
 @pytest.mark.parametrize("variant", ["lgbm", "residuo_logit"])

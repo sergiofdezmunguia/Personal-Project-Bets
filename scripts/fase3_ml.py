@@ -54,17 +54,28 @@ NAMES = {CLOSE: "Mercado, cierre (Pinnacle sin margen)", OPEN: "Mercado, apertur
          "residuo_logit": "Residuo sobre apertura, logit"}  # fmt: skip
 
 
-def grid() -> list[tuple[str, dict]]:
-    """Rejilla fijada antes de mirar resultados. Todas las variantes se registran."""
-    out: list[tuple[str, dict]] = []
+def grid() -> list[tuple[str, dict, int]]:
+    """Rejilla de ajuste, con su ronda. Todas las variantes se registran.
+
+    Ronda 1: fijada antes de mirar. Ronda 2: añadida tras ver que la ronda 1 elegía siempre el
+    borde menos complejo (auditoría del 2026-11-15); amplía solo hacia menos complejidad y se evalúa
+    en las mismas temporadas de ajuste, antes de mirar la evaluación."""
+    out: list[tuple[str, dict, int]] = []
+    lg = lambda lv, r: {"leaves": lv, "rounds": r, "lr": 0.02, "min_leaf": 200}  # noqa: E731
+    cb = lambda d, it: {"depth": d, "iterations": it, "lr": 0.03}  # noqa: E731
+    rl = lambda lv, r: {"leaves": lv, "rounds": r, "lr": 0.01, "min_leaf": 500, "l2": 10.0}  # noqa: E731
     for leaves, rounds in itertools.product((7, 31), (300, 1000)):
-        out.append(("lgbm", {"leaves": leaves, "rounds": rounds, "lr": 0.02, "min_leaf": 200}))
+        out.append(("lgbm", lg(leaves, rounds), 1))
     for depth, it in itertools.product((4, 6), (500, 1500)):
-        out.append(("catboost", {"depth": depth, "iterations": it, "lr": 0.03}))
+        out.append(("catboost", cb(depth, it), 1))
     for leaves, rounds in itertools.product((3, 7), (100, 400)):
-        out.append(("residuo_lgbm", {"leaves": leaves, "rounds": rounds, "lr": 0.01, "min_leaf": 500, "l2": 10.0}))
+        out.append(("residuo_lgbm", rl(leaves, rounds), 1))
     for alpha in (1e-4, 1e-3, 1e-2, 1e-1):
-        out.append(("residuo_logit", {"alpha": alpha}))
+        out.append(("residuo_logit", {"alpha": alpha}, 1))
+    out += [("lgbm", lg(3, 100), 2), ("lgbm", lg(3, 300), 2), ("lgbm", lg(7, 100), 2)]
+    out += [("catboost", cb(4, 200), 2), ("catboost", cb(2, 200), 2), ("catboost", cb(2, 500), 2)]
+    out += [("residuo_lgbm", rl(3, 25), 2), ("residuo_lgbm", rl(3, 50), 2), ("residuo_lgbm", rl(2, 100), 2)]
+    out += [("residuo_logit", {"alpha": a}, 2) for a in (1.0, 10.0)]
     return out
 
 
@@ -86,7 +97,7 @@ def predict(df, X, variant, params, seasons) -> pd.DataFrame:
         return rf.market_probs(df, "pin_close").where(mask, np.nan)
     if variant == OPEN:
         return rf.market_probs(df, "pin_open").where(mask, np.nan)
-    if variant == "dixon_coles":  # la misma predicción de la fase 2 (ancla del lunes)
+    if variant == "dixon_coles":  # el modelo de la fase 2 (ancla del lunes), arrancado en 2013/14
         p = X["saque"][["dc_home", "dc_draw", "dc_away"]].set_axis(rf.PROB, axis=1)
         return p.where(mask, np.nan)
     return ml.walk_forward(df, X[ml.DECISION[variant]], variant, params, seasons)
@@ -117,13 +128,13 @@ def run_tuning(df, X) -> None:
     h = ex.data_hash(df[df["season"] <= TUNING[-1]])
     markets = {v: predict(df, X, v, {}, TUNING) for v in (CLOSE, OPEN)}
     best: dict[str, tuple[float, dict]] = {}
-    for variant, params in grid():
+    for variant, params, ronda in grid():
         t = time.time()
         p = predict(df, X, variant, params, TUNING)
         res = evaluate(df, markets | {variant: p}, n_boot=500)
         m = res["modelos"][variant]
         ex.log(variant, "ajuste", params, short(m) | {"n": res["n"]}, h,
-               notes=f"fase 3; temporadas {TUNING[0]}–{TUNING[-1]}; entrenamiento desde {ml.TRAIN_FROM}")  # fmt: skip
+               notes=f"fase 3, ronda {ronda}; temporadas {TUNING[0]}–{TUNING[-1]}; entrenamiento desde {ml.TRAIN_FROM}")  # fmt: skip
         print(f"{variant:14s} {json.dumps(params):70s} logloss {m['logloss']:.4f} "
               f"Δcierre {m['delta_logloss']:+.4f} Δapertura {m['dap_logloss']:+.4f} n {res['n']} "
               f"({time.time() - t:.0f} s)", flush=True)  # fmt: skip
@@ -235,12 +246,14 @@ def run_evaluation(df, X, n_boot) -> None:
         preds[v] = predict(df, X, v, params, rf.EVALUATION)
         print(f"{v}: {time.time() - t:.0f} s", flush=True)
     overall = evaluate(df, preds, n_boot)
-    recent = ["2021/22", "2022/23", "2023/24", "2024/25"]
+    recent = rf.EVALUATION[-4:]  # 2021/22–2024/25, la ventana de validación del plan
     sub = {s: evaluate(df, {k: p.where(df["season"].eq(s), np.nan) for k, p in preds.items()}, 1000)
            for s in rf.EVALUATION}  # fmt: skip
     rec = evaluate(df, {k: p.where(df["season"].isin(recent), np.nan) for k, p in preds.items()}, n_boot)
     by_league = {lg: evaluate(df, {k: p.where(df["league"].eq(lg), np.nan) for k, p in preds.items()}, 500)
                  for lg in sorted(df["league"].unique())}  # fmt: skip
+    xmas = holidays(df)
+    no_xmas = evaluate(df, {k: p.where(~xmas, np.nan) for k, p in preds.items()}, n_boot)
     for v in configs:
         if v in (CLOSE, "dixon_coles"):
             continue  # el cierre es la referencia; Dixon-Coles ya se registró en la fase 2
@@ -251,10 +264,17 @@ def run_evaluation(df, X, n_boot) -> None:
     y = mt.outcome_index(df.loc[ok, "result"])
     cal = {v: mt.calibration_table(p.loc[ok, rf.PROB].to_numpy(float), y) for v, p in preds.items()}
     plot_calibration(cal)
-    write_report(df, X, preds, ok, overall, rec, sub, by_league, cal, configs, h)
+    write_report(df, X, preds, ok, overall, rec, sub, by_league, cal, configs, h, no_xmas, int((xmas & ok).sum()))
 
 
-def write_report(df, X, preds, ok, overall, rec, sub, by_league, cal, configs, h) -> None:
+def holidays(df) -> pd.Series:
+    """Jornadas de Navidad (20-dic a 5-ene): la auditoría vio que ahí football-data recoge la apertura
+    antes del ancla supuesta (el movimiento apertura→cierre se correlaciona con el partido previo)."""
+    md = df["date"].dt.month * 100 + df["date"].dt.day
+    return (md >= 1220) | (md <= 105)
+
+
+def write_report(df, X, preds, ok, overall, rec, sub, by_league, cal, configs, h, no_xmas, n_xmas) -> None:
     order = list(configs)
     others = [v for v in order if v != CLOSE]
     rows = []
@@ -272,6 +292,12 @@ def write_report(df, X, preds, ok, overall, rec, sub, by_league, cal, configs, h
         rows.append([NAMES[v], fmt_ci(m, "logloss"), fmt_ci(m, "delta_logloss", sign=True) if v != CLOSE else "—",
                      fmt_ci(m, "dap_logloss", sign=True) if v != OPEN else "—"])  # fmt: skip
     recent = md_table(["Modelo", "Log loss", "Δ vs cierre", "Δ vs apertura"], rows)
+    rows = []
+    for v in order:
+        m = no_xmas["modelos"][v]
+        rows.append([NAMES[v], fmt_ci(m, "delta_logloss", sign=True) if v != CLOSE else "—",
+                     fmt_ci(m, "dap_logloss", sign=True) if v != OPEN else "—"])  # fmt: skip
+    xmas_table = md_table(["Modelo", "Δ vs cierre", "Δ vs apertura"], rows)
     ml_models = [v for v in order if v in ml.DECISION]
     srows = []
     for s, r in sub.items():
@@ -335,21 +361,25 @@ datos de partidos no se suben. Hash de los datos evaluados: `{h}`.
 - **Ventanas.** Para predecir la temporada S se entrena un modelo con {ml.TRAIN_FROM}…S − 1. Las
   variables de entrenamiento son las que existían en su día (ratings en línea, Dixon-Coles por
   ventanas), así que no hay predicciones «del futuro» apiladas.
-- **Ajuste.** Rejilla fijada antes de mirar, en 2014/15–2016/17 ({n_tried} variantes distintas;
+- **Ajuste.** Rejilla fijada antes de mirar, en 2014/15–2016/17 ({n_tried} variantes distintas en dos rondas y {len(tuning)} filas del registro, incluida una primera
+  ejecución con el fallo de inicialización de Elo/pi ya corregido;
   regla: mínimo log loss). Elo, pi y Dixon-Coles usan los hiperparámetros elegidos en la fase 2.
   Evaluaciones de ML registradas hasta hoy: {n_eval}. **2025/26 no se ha leído.**
 - **Conjunto común.** {overall['n']} partidos con probabilidad de todos los modelos y ambas cuotas
   de Pinnacle ({overall['n_descartados']} descartados).
-- **Intervalos.** IC 95 % por bootstrap de semanas ISO ({overall['semanas']} semanas, 2.000
-  remuestras). Δ son diferencias emparejadas partido a partido; **Δ > 0 significa peor que la
-  referencia.**
+- **Intervalos.** IC 95 % por bootstrap de semanas ISO ({overall['semanas']} semanas; 2.000
+  remuestras en el total, la ventana reciente y la tabla sin Navidad, 1.000 por temporada y 500 por
+  liga). Δ son diferencias emparejadas partido a partido; **Δ > 0 significa peor que la referencia.**
+  Las tablas por temporada y liga son muchas comparaciones: algún IC suelto por debajo de 0 es
+  esperable por azar y no cuenta como ventaja.
 - **Antifuga.** `tests/test_ml.py`: alterar resultados y estadísticas desde un día c no cambia ninguna
   variable ni predicción de partidos cuya ancla sea ≤ c (también los posteriores a c con la apertura),
   y cambiar las cuotas de cierre no cambia ninguna predicción. Seis mutantes con fugas deliberadas
   (ancla equivocada, media sin agrupar, día incluido, cierre como variable, entrenar con la temporada
   evaluada, escalado con la prueba) son detectados.
 
-Hiperparámetros elegidos:
+Hiperparámetros elegidos (ronda 1 fijada antes de mirar; ronda 2 añadida porque la 1 elegía
+siempre el borde menos complejo, también en las temporadas de ajuste):
 
 {params}
 
@@ -362,6 +392,13 @@ ECE: error de calibración esperado (10 tramos, media de los tres resultados).
 ### Solo 2021/22–2024/25
 
 {recent}
+
+### Sin las jornadas de Navidad (20-dic a 5-ene)
+
+En esas jornadas seguidas football-data recogió la apertura antes de lo supuesto, así que los
+residuos podrían ver resultados que la cuota aún no tenía. Se quitan {n_xmas} partidos:
+
+{xmas_table}
 
 ## Por temporada
 

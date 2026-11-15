@@ -141,6 +141,8 @@ def build(df: pd.DataFrame, decision: str, *, elo: Elo, pi: PiRating, dc: DixonC
     if decision == "apertura":
         parts.append(opening_features(df))
     out = pd.concat(parts, axis=1)
+    if not out.index.equals(df.index):
+        raise ValueError("Variables desalineadas con df")
     check_columns(out.columns)
     return out
 
