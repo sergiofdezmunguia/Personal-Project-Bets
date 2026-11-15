@@ -5,8 +5,12 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
 ## Abiertas
 
 - **Visibilidad del repo:** seguir público o separar código público y resultados privados.
-- **Dónde corre el recolector de cuotas:** debe funcionar con el PC apagado.
-- **Proveedor de cuotas en vivo:** The Odds API o API de Betfair; verificar cuota gratuita, casas y acceso desde España.
+- **Dónde corre el recolector de cuotas:** debe funcionar con el PC apagado. Propuesta (fase 4):
+  cron o Programador de tareas cada 6 h para football-data; equipo siempre encendido si llega la
+  clave de The Odds API. GitHub Actions no, porque obligaría a subir datos al repo público.
+- **Proveedor de cuotas en vivo:** football-data `fixtures.csv` ya funciona sin clave (2 instantáneas
+  por semana). The Odds API (plan gratuito, ~2 pasadas al día en 8 ligas) necesita registro:
+  pendiente de autorización. La API de Betfair queda descartada porque exige una cuenta en una casa.
 - **Presupuesto máximo** si algún día se llega a la fase 5.
 - **xG mientras Understat esté en mantenimiento:** esperar o evaluar otra fuente. Bloquea la unión
   de datos de la fase 1 y la primera ejecución con datos reales.
@@ -16,13 +20,37 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
   ver 2026-11-15). Falta fijarla con cuotas propias con marca de tiempo.
 - **Registro de experimentos en `train_xgboost.py`:** la fase 3 usa `scripts/fase3_ml.py`, que sí
   registra. El script antiguo sigue sin conectar: retirarlo o archivarlo.
-- **Normalización del margen (prioritaria tras la fase 3):** la referencia usa la proporcional, y la
-  auditoría de la fase 3 vio que Shin mejora la apertura tanto como el mejor residuo. Probar Shin o
-  potencia como variantes registradas antes de calcular CLV en la fase 4.
 - **Forma entre temporadas:** la ventana cruza temporadas, así que un equipo que vuelve tras un año
   usa partidos de hace dos temporadas. No es una fuga, pero está sin evaluar.
 
 ## Tomadas
+
+### 2026-11-15: fase 4, normalización del margen, cuotas propias y CLV
+
+- **Normalización de referencia: potencia** (`src/margin.py`). Se eligió con una regla fijada antes
+  de mirar: el menor log loss del cierre de Pinnacle en el ajuste 2013/14–2016/17 (potencia 0,99413,
+  Shin 0,99418, proporcional 0,99435). En la evaluación, Shin y potencia son indistinguibles y ambas
+  mejoran a la proporcional en unas 2·10⁻⁴ y en calibración. **Motivo:** la proporcional reparte mal
+  el margen entre el favorito y la sorpresa, y eso fabricaba la mejora del residuo de la fase 3. Las
+  fases 2 y 3 se quedan con la proporcional, que sigue siendo el valor por defecto.
+- **Residuos de la fase 3 reevaluados sin reajustar** (mismos hiperparámetros, apertura con
+  potencia): LightGBM −0,00008 [−0,00015, +0,00000] frente a la apertura con potencia. La auditoría
+  lo considera real, pero diminuto, concentrado (2017/18–2019/20; D1 y E2) y sin resistir la
+  multiplicidad. **No es una ventaja.**
+- **CLV:** `clv_ev` = cuota efectiva · p_cierre sin margen (potencia) − 1, con IC por semanas. La
+  decisión solo ve las cuotas con `captured_utc` ≤ hora de decisión. Hay apuestas planas cuando el EV
+  supera un umbral fijado antes de mirar (0, 2 % y 5 %). En el histórico, los residuos casi no
+  apuestan (13–14 apuestas, porque su corrección es menor que el margen) y Dixon-Coles tiene un CLV
+  del −4,2 %. Nadie se acerca a la puerta de la fase 4.
+- **Recolector:** SQLite fuera de git (`data/odds/`), con clave única e `INSERT OR IGNORE`.
+  football-data se pide de forma condicional; sin `Last-Modified`, la versión es la huella del
+  contenido. The Odds API está listo, pero sin clave. **Motivo:** repetir una captura nunca debe
+  cambiar los datos ni la hora en que vimos una cuota.
+- **Robustez:** el recorte «quitar el 1 % más favorable» se sustituye por un recorte simétrico más el
+  asimétrico frente a un nulo de signo aleatorio (auditoría). **Motivo:** el recorte asimétrico sube la
+  media de cualquier diferencia con colas gruesas, incluso la del cierre frente a la apertura.
+- **Auditoría (`backtest-auditor`): aprobada con reservas, sin fugas.** Las reservas están corregidas o
+  documentadas en `docs/clv.md`.
 
 ### 2026-11-15: fase 3, ML y residuos sobre la apertura
 

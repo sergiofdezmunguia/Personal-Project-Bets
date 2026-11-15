@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from src import football_data as fd
+from src import margin as mg
 from src import metrics as mt
 from src.dixon_coles import DixonColes
 from src.dixon_coles import predict_walk_forward as dc_walk_forward
@@ -44,13 +45,11 @@ def load_history(raw_dir: Path) -> pd.DataFrame:
     return df.sort_values(["date", "league", "home_team"], kind="stable").reset_index(drop=True)
 
 
-def market_probs(df: pd.DataFrame, prefix: str) -> pd.DataFrame:
-    """Probabilidad sin margen (normalización proporcional) de un juego de cuotas 1X2."""
+def market_probs(df: pd.DataFrame, prefix: str, method: str = "proporcional") -> pd.DataFrame:
+    """Probabilidad sin margen de un juego de cuotas 1X2 (proporcional, Shin o potencia;
+    ver `src/margin.py`). La proporcional es la de las fases 2 y 3."""
     odds = df[[f"{prefix}_{s}" for s in ("home", "draw", "away")]].to_numpy(float, copy=True)
-    odds[~(odds > 1)] = np.nan
-    inv = 1 / odds
-    p = inv / inv.sum(axis=1, keepdims=True)
-    return pd.DataFrame(p, index=df.index, columns=PROB)
+    return pd.DataFrame(mg.normalize(odds, method), index=df.index, columns=PROB)
 
 
 def predict(df: pd.DataFrame, variant: str, params: dict, seasons: list[str], n_jobs: int = 1) -> pd.DataFrame:
