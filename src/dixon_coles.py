@@ -63,6 +63,7 @@ def _nll_grad(theta, hi, ai, x, y, w, team_league, new_flag, cfg: DixonColes, n_
     tau[m01] = 1 + lh[m01] * rho
     tau[m10] = 1 + la[m10] * rho
     tau[m11] = 1 - rho
+    clipped = tau < 1e-10
     tau = np.maximum(tau, 1e-10)
     g_eh[m00] = -lh[m00] * la[m00] * rho / tau[m00]
     g_ea[m00] = g_eh[m00]
@@ -72,6 +73,7 @@ def _nll_grad(theta, hi, ai, x, y, w, team_league, new_flag, cfg: DixonColes, n_
     g_ea[m10] = la[m10] * rho / tau[m10]
     g_rho[m10] = la[m10] / tau[m10]
     g_rho[m11] = -1 / tau[m11]
+    g_eh[clipped] = g_ea[clipped] = g_rho[clipped] = 0  # en la zona recortada log τ es constante
 
     ll = w * (x * eh - lh + y * ea - la + np.log(tau))
     deh = w * (x - lh + g_eh)

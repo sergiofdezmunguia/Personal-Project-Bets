@@ -66,10 +66,16 @@ def verify(path: Path = REGISTRY) -> None:
 
 def log(variant: str, phase: str, params: dict, metrics: dict, data: str, *,
         path: Path = REGISTRY, notes: str = "") -> dict:  # fmt: skip
-    """Añade una fila al registro. Nunca reescribe las anteriores."""
+    """Añade una fila al registro. Nunca reescribe las anteriores.
+
+    En el registro real (`REGISTRY`) exige que `src/` y `scripts/` estén commiteados, para que
+    cada fila apunte a un código que se pueda recuperar."""
     if phase not in ("ajuste", "evaluacion", "prueba"):
         raise ValueError(f"Fase desconocida: {phase}")
     path = Path(path)
+    commit = git_commit()
+    if path.resolve() == REGISTRY.resolve() and commit.endswith("+cambios"):
+        raise RuntimeError("Haz commit de src/ y scripts/ antes de registrar un experimento")
     verify(path)
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     row = {
@@ -79,7 +85,7 @@ def log(variant: str, phase: str, params: dict, metrics: dict, data: str, *,
         "parametros": params,
         "metricas": metrics,
         "hash_datos": data,
-        "commit": git_commit(),
+        "commit": commit,
         "notas": notes,
         "prev_hash": _row_hash(lines[-1]) if lines else GENESIS,
     }

@@ -24,8 +24,11 @@ from src.ratings import Elo, OrderedLogit, PiRating, check_input, run_online, wa
 # ----------------------------------------------------------------------------- datos inventados
 
 
-def synthetic(seed: int = 3, seasons=(2012, 2013, 2014), teams_per_league: int = 6) -> pd.DataFrame:
-    """Tres ligas (dos del mismo país con un ascenso/descenso por temporada) y resultados Poisson."""
+def synthetic(seed: int = 3, seasons=(2012, 2013, 2014), teams_per_league: int = 6,
+              step_days: int = 7) -> pd.DataFrame:
+    """Tres ligas (dos del mismo país con un ascenso/descenso por temporada) y resultados Poisson.
+    Con `step_days` distinto de 7 las jornadas caen en todos los días de la semana. En D1 entra un
+    equipo nuevo, sin historial, en la última temporada."""
     rng = np.random.default_rng(seed)
     leagues = {lg: [f"{lg}-t{i}" for i in range(teams_per_league)] for lg in ("E0", "E1", "D1")}
     strength = {t: rng.normal(0, 0.35) - 0.3 * (lg == "E1") for lg, ts in leagues.items() for t in ts}
@@ -42,12 +45,15 @@ def synthetic(seed: int = 3, seasons=(2012, 2013, 2014), teams_per_league: int =
                     ag = rng.poisson(np.exp(0.25 + strength[a] - strength[h]))
                     rows.append({"date": day, "season": label, "league": lg, "home_team_id": h,
                                  "away_team_id": a, "home_goals": hg, "away_goals": ag})  # fmt: skip
-                day += pd.Timedelta(days=7)
+                day += pd.Timedelta(days=step_days)
         # ascenso y descenso entre E0 y E1
         worst = min(leagues["E0"], key=strength.get)
         best = max(leagues["E1"], key=strength.get)
         leagues["E0"] = [best if t == worst else t for t in leagues["E0"]]
         leagues["E1"] = [worst if t == best else t for t in leagues["E1"]]
+        if season == seasons[-2]:
+            strength["D1-nuevo"] = -0.4
+            leagues["D1"] = leagues["D1"][1:] + ["D1-nuevo"]
     df = pd.DataFrame(rows).sort_values(["date", "league"], kind="stable").reset_index(drop=True)
     df["result"] = np.select([df.home_goals > df.away_goals, df.home_goals == df.away_goals], ["H", "D"], "A")
     df["match_id"] = df.index.astype(str)
@@ -79,6 +85,14 @@ def pi_probs(df):
     return walk_forward_probs(df, run_online(df, PiRating()), SEASONS, fit_from="2013/14")
 
 
+def elo_regress_probs(df):
+    return walk_forward_probs(df, run_online(df, Elo(season_regress=0.2)), SEASONS, fit_from="2013/14")
+
+
+def pi_regress_probs(df):
+    return walk_forward_probs(df, run_online(df, PiRating(season_regress=0.2)), SEASONS, fit_from="2013/14")
+
+
 def dc_probs(df):
     return dc_walk_forward(df, DixonColes(), predict_from=pd.Timestamp("2013-08-01"))
 
@@ -107,12 +121,35 @@ def df():
 # ----------------------------------------------------------------------------- antifuga
 
 
-@pytest.mark.parametrize("fn", [elo_probs, pi_probs, dc_probs], ids=["elo", "pi", "dixon_coles"])
+@pytest.mark.parametrize("fn", [elo_probs, pi_probs, elo_regress_probs, pi_regress_probs, dc_probs],
+                         ids=["elo", "pi", "elo_regresion", "pi_regresion", "dixon_coles"])
 @pytest.mark.parametrize("q", [0.34, 0.5, 0.67, 0.85])
 def test_changing_future_results_does_not_change_past_predictions(df, fn, q):
     days = np.sort(df["date"].unique())
     cutoff = pd.Timestamp(days[int(q * len(days))])  # un día con partidos: también debe quedar igual
     assert_past_unchanged(fn, df, cutoff)
+
+
+@pytest.fixture(scope="module")
+def df_weekdays():
+    return synthetic(step_days=3)  # jornadas cada 3 días: hay partidos en lunes, martes, jueves…
+
+
+@pytest.mark.parametrize("weekday", [0, 1, 3], ids=["lunes", "martes", "jueves"])
+def test_dixon_coles_week_cut_on_any_weekday(df_weekdays, weekday):
+    """Un desfase de 1–2 días en el corte semanal de Dixon-Coles debe hacer fallar esto."""
+    days = pd.Series(np.sort(df_weekdays["date"].unique()))
+    days = days[(days.dt.day_of_week == weekday) & (days > pd.Timestamp("2013-09-01"))]
+    for cutoff in days.iloc[[0, len(days) // 2, -3]]:
+        assert_past_unchanged(dc_probs, df_weekdays, pd.Timestamp(cutoff))
+
+
+def test_newcomer_and_season_regression_do_not_leak(df):
+    """El equipo nuevo de D1 2014/15 y la regresión entre temporadas solo usan el pasado."""
+    assert "D1-nuevo" in set(df["home_team_id"])
+    first = df.loc[df["home_team_id"].eq("D1-nuevo") | df["away_team_id"].eq("D1-nuevo"), "date"].min()
+    for fn in (elo_regress_probs, pi_regress_probs, dc_probs):
+        assert_past_unchanged(fn, df, first)
 
 
 def test_the_check_detects_a_deliberate_leak(df):
@@ -193,6 +230,18 @@ def test_dixon_coles_gradient_matches_finite_differences():
     args = (hi, ai, x, y, w, tl, nf, DixonColes(), n_t, n_l)
     err = check_grad(lambda t: _nll_grad(t, *args)[0], lambda t: _nll_grad(t, *args)[1], theta)
     assert err < 1e-5
+
+
+def test_dixon_coles_gradient_is_zero_where_tau_is_clipped():
+    """Con λ grande y ρ en el límite, τ(0,0) < 0 se recorta: valor y gradiente deben ser coherentes."""
+    hi, ai = np.array([0, 1]), np.array([1, 0])
+    x, y, w = np.zeros(2), np.zeros(2), np.ones(2)
+    theta = np.array([1.2, 0.3, 0.3, 0.1, -0.1, 0.2, 0.0, 0.0, 0.0])
+    args = (hi, ai, x, y, w, np.zeros(2, int), np.zeros(2), DixonColes(), 2, 1)
+    lam = np.exp(1.2 + 0.3 + 0.1 + 0.0)
+    assert 1 - lam * np.exp(1.2 - 0.1 + 0.2) * 0.3 < 0  # el punto está en la zona recortada
+    err = check_grad(lambda t: _nll_grad(t, *args)[0], lambda t: _nll_grad(t, *args)[1], theta)
+    assert err < 1e-4
 
 
 def test_score_probs_are_coherent():

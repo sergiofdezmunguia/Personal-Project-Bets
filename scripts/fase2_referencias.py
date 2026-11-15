@@ -127,8 +127,8 @@ def plot_calibration(cal: dict[str, pd.DataFrame]) -> None:
                     markeredgecolor="#fcfcfb", markeredgewidth=1.5, zorder=2)  # fmt: skip
         ax.set_title(f"Gana {outcome}" if outcome != "empate" else "Empate", color="#0b0b0b", fontsize=11)
         ax.set_xlabel("Probabilidad prevista", color="#52514e")
-        ax.set_xlim(0, 0.9)
-        ax.set_ylim(0, 0.9)
+        ax.set_xlim(0, 0.95)
+        ax.set_ylim(0, 0.95)
         ax.grid(color="#e6e5e1", lw=0.6)
         for s in ax.spines.values():
             s.set_color("#d3d2cd")
@@ -213,7 +213,7 @@ def write_report(overall, rec, sub, by_league, cal, configs, h) -> None:
             cal_rows.append(cells)
     calib = md_table(["Resultado", "Tramo"] + [NAMES[v] for v in order], cal_rows)
     params = "\n".join(f"- **{NAMES[v]}:** `{json.dumps(p, ensure_ascii=False)}`" for v, p in configs.items() if p)
-    n_tried = sum(1 for r in ex.read() if r["fase"] == "ajuste")
+    n_tried = sum(1 for r in ex.read() if r["fase"] == "ajuste" and r["variante"] != REF)
     n_eval = sum(1 for r in ex.read() if r["fase"] == "evaluacion") // max(len(configs), 1)
     text = f"""# Modelos de referencia 1X2 (fase 2)
 
@@ -228,8 +228,8 @@ los datos de partidos no se suben. Hash de los datos evaluados: `{h}`.
   exp(−ξ·días)). Ninguna predicción usa partidos de su mismo día ni posteriores (tests en
   `tests/test_referencias.py`).
 - **Temporadas.** 2012/13 arranca los ratings. 2013/14–2016/17 sirvió para elegir hiperparámetros
-  ({n_tried} variantes registradas, regla: mínimo log loss). 2017/18–2024/25 es la evaluación (esta
-  configuración se ha evaluado {n_eval} vez/veces). **2025/26 no se ha leído.**
+  ({n_tried} variantes registradas, regla: mínimo log loss). 2017/18–2024/25 es la evaluación (evaluaciones registradas
+  hasta hoy: {n_eval}). **2025/26 no se ha leído.**
 - **Conjunto común.** {overall['n']} partidos de 8 ligas con probabilidad de todos los modelos
   ({overall['n_descartados']} descartados por faltar alguna cuota). La referencia es el cierre de
   Pinnacle sin margen (normalización proporcional).

@@ -57,7 +57,7 @@ def predict(df: pd.DataFrame, variant: str, params: dict, seasons: list[str], n_
     """Probabilidades de una variante para las filas de `seasons` (el resto queda en NaN)."""
     mask = df["season"].isin(seasons)
     if variant == "mercado_cierre":
-        out = df[["ref_prob_home", "ref_prob_draw", "ref_prob_away"]].set_axis(PROB, axis=1)
+        out = market_probs(df, "pin_close")  # solo Pinnacle: sin recurrir a Betfair ni a la media
     elif variant == "mercado_apertura":
         out = market_probs(df, "pin_open")
     elif variant in ("elo", "pi"):

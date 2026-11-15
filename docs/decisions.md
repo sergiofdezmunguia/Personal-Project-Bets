@@ -49,6 +49,13 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
   con probabilidad de todos los modelos. IC 95 % por bootstrap de semanas ISO (2.000 remuestras) y
   diferencias emparejadas frente al cierre sin margen. **Motivo:** los partidos de una jornada
   comparten noticias y condiciones; remuestrear partidos sueltos estrecharía los intervalos.
+- **Auditoría (`backtest-auditor`, 2026-11-15): aprobado con reservas**, sin fugas ni errores de
+  métricas. Reservas corregidas: (1) el registro real exige `src/` y `scripts/` commiteados (la
+  primera rejilla y la primera evaluación quedaron con `+cambios`; se repitieron con el código
+  commiteado y las filas antiguas se conservan); (2) tests del corte semanal de Dixon-Coles en
+  cualquier día de la semana; (3) tests antifuga con regresión entre temporadas y con un equipo
+  nuevo; (4) gradiente de Dixon-Coles a cero donde τ se recorta; (5) la referencia de la fase 2 es
+  **solo Pinnacle** (`pin_close_*`), sin recurrir a Betfair ni a la media.
 - **Apertura de Pinnacle como variante:** se evalúa también la apertura sin margen, para tener una
   escala de cuánto mejora el mercado hasta el cierre.
 
