@@ -111,9 +111,16 @@ def score_probs(lh: np.ndarray, la: np.ndarray, rho: float) -> np.ndarray:
     return out / out.sum(axis=1, keepdims=True)
 
 
+def monday(dates: pd.Series) -> pd.Series:
+    """Ancla por defecto: el lunes de la semana del partido (fase 2)."""
+    return (dates - pd.to_timedelta(dates.dt.day_of_week, unit="D")).dt.normalize()
+
+
 def predict_walk_forward(df: pd.DataFrame, cfg: DixonColes, predict_from: pd.Timestamp,
-                         n_jobs: int = 1) -> pd.DataFrame:  # fmt: skip
-    """Probabilidades 1X2 para los partidos con fecha ≥ `predict_from`, reajustando cada lunes.
+                         n_jobs: int = 1, anchor=monday) -> pd.DataFrame:  # fmt: skip
+    """Probabilidades 1X2 para los partidos con fecha ≥ `predict_from`, reajustando en cada ancla
+    (por defecto cada lunes) solo con partidos de fecha anterior al ancla. `anchor` debe ser una
+    función de módulo (se envía a otros procesos) con anchor(D) ≤ D.
     Cada país se ajusta por separado (en paralelo si `n_jobs` > 1)."""
     check_input(df)
     out = pd.DataFrame(np.nan, index=df.index, columns=["p_home", "p_draw", "p_away"])
@@ -122,18 +129,21 @@ def predict_walk_forward(df: pd.DataFrame, cfg: DixonColes, predict_from: pd.Tim
         from concurrent.futures import ProcessPoolExecutor
 
         with ProcessPoolExecutor(min(n_jobs, len(pools))) as ex:
-            parts = list(ex.map(_predict_pool, pools, [cfg] * len(pools), [predict_from] * len(pools)))
+            parts = list(ex.map(_predict_pool, pools, [cfg] * len(pools), [predict_from] * len(pools),
+                                [anchor] * len(pools)))  # fmt: skip
     else:
-        parts = [_predict_pool(g, cfg, predict_from) for g in pools]
+        parts = [_predict_pool(g, cfg, predict_from, anchor) for g in pools]
     for part in parts:
         out.loc[part.index, :] = part.to_numpy()
     return out
 
 
-def _predict_pool(g: pd.DataFrame, cfg: DixonColes, predict_from: pd.Timestamp) -> pd.DataFrame:
+def _predict_pool(g: pd.DataFrame, cfg: DixonColes, predict_from: pd.Timestamp, anchor=monday) -> pd.DataFrame:
     out = pd.DataFrame(np.nan, index=g.index, columns=["p_home", "p_draw", "p_away"])
     dates = g["date"]
-    weeks = (dates - pd.to_timedelta(dates.dt.day_of_week, unit="D")).dt.normalize()
+    weeks = pd.Series(pd.to_datetime(anchor(dates)), index=g.index)
+    if (weeks > dates).any():
+        raise ValueError("El ancla no puede ser posterior al partido")
     first_seen = pd.concat([g[["date", "home_team_id"]].rename(columns={"home_team_id": "t"}),
                             g[["date", "away_team_id"]].rename(columns={"away_team_id": "t"})]
                            ).groupby("t")["date"].min()  # fmt: skip
@@ -141,26 +151,26 @@ def _predict_pool(g: pd.DataFrame, cfg: DixonColes, predict_from: pd.Timestamp) 
     lg_idx = {lg: i for i, lg in enumerate(leagues)}
     warm: dict[str, tuple[float, float]] = {}
     glob = np.array([0.3, 0.25, -0.05])
-    for monday in sorted(weeks[dates >= predict_from].unique()):
-        monday = pd.Timestamp(monday)
-        target = g[(weeks == monday) & (dates >= predict_from)]
-        train = g[(dates < monday) & (dates >= monday - pd.Timedelta(days=cfg.window_days))]
+    for cut in sorted(weeks[dates >= predict_from].unique()):
+        cut = pd.Timestamp(cut)
+        target = g[(weeks == cut) & (dates >= predict_from)]
+        train = g[(dates < cut) & (dates >= cut - pd.Timedelta(days=cfg.window_days))]
         if len(train) < 50:
             continue
         teams = sorted(set(train["home_team_id"]) | set(train["away_team_id"]))
         t_idx = {t: i for i, t in enumerate(teams)}
         n_t, n_l = len(teams), len(leagues)
-        # liga actual de cada equipo: la de su último partido antes del lunes
+        # liga actual de cada equipo: la de su último partido antes del corte
         last = pd.concat([train[["date", "home_team_id", "league"]].rename(columns={"home_team_id": "t"}),
                           train[["date", "away_team_id", "league"]].rename(columns={"away_team_id": "t"})]
                          ).sort_values("date").groupby("t")["league"].last()  # fmt: skip
         team_league = np.array([lg_idx[last[t]] for t in teams])
-        new_flag = np.array([(monday - first_seen[t]).days < cfg.newcomer_days for t in teams], float)
+        new_flag = np.array([(cut - first_seen[t]).days < cfg.newcomer_days for t in teams], float)
         hi = train["home_team_id"].map(t_idx).to_numpy()
         ai = train["away_team_id"].map(t_idx).to_numpy()
         x = train["home_goals"].to_numpy(float)
         y = train["away_goals"].to_numpy(float)
-        w = np.exp(-cfg.xi * (monday - train["date"]).dt.days.to_numpy(float))
+        w = np.exp(-cfg.xi * (cut - train["date"]).dt.days.to_numpy(float))
 
         theta0 = np.concatenate([glob, [warm.get(t, (0, 0))[0] for t in teams],
                                  [warm.get(t, (0, 0))[1] for t in teams], np.zeros(2 * n_l)])  # fmt: skip

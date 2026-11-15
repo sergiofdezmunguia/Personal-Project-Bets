@@ -24,3 +24,5 @@ models/*.json
 .vscode/*.code-workspace
 data/raw/**/*.csv
 data/processed/*.csv.gz
+data/processed/*.pkl
+catboost_info/

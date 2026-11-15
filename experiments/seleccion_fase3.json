@@ -1,0 +1,39 @@
+{
+  "regla": "mínimo log loss en ajuste 2014/15–2016/17",
+  "hash_datos": "1892d82ff5de5f09",
+  "seleccion": {
+    "lgbm": {
+      "parametros": {
+        "leaves": 3,
+        "rounds": 300,
+        "lr": 0.02,
+        "min_leaf": 200
+      },
+      "logloss_ajuste": 1.01484
+    },
+    "catboost": {
+      "parametros": {
+        "depth": 2,
+        "iterations": 200,
+        "lr": 0.03
+      },
+      "logloss_ajuste": 1.01278
+    },
+    "residuo_lgbm": {
+      "parametros": {
+        "leaves": 3,
+        "rounds": 25,
+        "lr": 0.01,
+        "min_leaf": 500,
+        "l2": 10.0
+      },
+      "logloss_ajuste": 0.99823
+    },
+    "residuo_logit": {
+      "parametros": {
+        "alpha": 1.0
+      },
+      "logloss_ajuste": 0.99867
+    }
+  }
+}
