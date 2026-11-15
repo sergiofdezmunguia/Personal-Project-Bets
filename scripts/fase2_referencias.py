@@ -213,7 +213,9 @@ def write_report(overall, rec, sub, by_league, cal, configs, h) -> None:
             cal_rows.append(cells)
     calib = md_table(["Resultado", "Tramo"] + [NAMES[v] for v in order], cal_rows)
     params = "\n".join(f"- **{NAMES[v]}:** `{json.dumps(p, ensure_ascii=False)}`" for v, p in configs.items() if p)
-    n_tried = sum(1 for r in ex.read() if r["fase"] == "ajuste" and r["variante"] != REF)
+    tuning_rows = [r for r in ex.read() if r["fase"] == "ajuste" and r["variante"] != REF]
+    n_rows = len(tuning_rows)
+    n_tried = len({(r["variante"], json.dumps(r["parametros"], sort_keys=True)) for r in tuning_rows})
     n_eval = sum(1 for r in ex.read() if r["fase"] == "evaluacion") // max(len(configs), 1)
     text = f"""# Modelos de referencia 1X2 (fase 2)
 
@@ -228,7 +230,7 @@ los datos de partidos no se suben. Hash de los datos evaluados: `{h}`.
   exp(−ξ·días)). Ninguna predicción usa partidos de su mismo día ni posteriores (tests en
   `tests/test_referencias.py`).
 - **Temporadas.** 2012/13 arranca los ratings. 2013/14–2016/17 sirvió para elegir hiperparámetros
-  ({n_tried} variantes registradas, regla: mínimo log loss). 2017/18–2024/25 es la evaluación (evaluaciones registradas
+  ({n_tried} variantes distintas en {n_rows} filas del registro; regla: mínimo log loss). 2017/18–2024/25 es la evaluación (evaluaciones registradas
   hasta hoy: {n_eval}). **2025/26 no se ha leído.**
 - **Conjunto común.** {overall['n']} partidos de 8 ligas con probabilidad de todos los modelos
   ({overall['n_descartados']} descartados por faltar alguna cuota). La referencia es el cierre de
