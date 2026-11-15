@@ -1,0 +1,32 @@
+{
+  "regla": "mínimo log loss en ajuste 2013/14–2016/17",
+  "hash_datos": "1892d82ff5de5f09",
+  "seleccion": {
+    "mercado_apertura": {
+      "parametros": {},
+      "logloss_ajuste": 0.99652
+    },
+    "elo": {
+      "parametros": {
+        "k": 20,
+        "goal_mult": true,
+        "season_regress": 0.0
+      },
+      "logloss_ajuste": 1.01403
+    },
+    "pi": {
+      "parametros": {
+        "lam": 0.035,
+        "gamma": 0.7
+      },
+      "logloss_ajuste": 1.01636
+    },
+    "dixon_coles": {
+      "parametros": {
+        "xi": 0.002,
+        "newcomer": 0.0
+      },
+      "logloss_ajuste": 1.01259
+    }
+  }
+}
