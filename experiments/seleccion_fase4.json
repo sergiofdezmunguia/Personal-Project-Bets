@@ -1,0 +1,20 @@
+{
+  "regla": "mínimo log loss del cierre de Pinnacle en ajuste 2013/14–2016/17",
+  "hash_datos": "1892d82ff5de5f09",
+  "logloss_cierre": {
+    "proporcional": 0.994354,
+    "shin": 0.994179,
+    "potencia": 0.994128
+  },
+  "logloss_apertura": {
+    "proporcional": 0.996517,
+    "shin": 0.996328,
+    "potencia": 0.996263
+  },
+  "normalizacion": "potencia",
+  "umbrales_clv": [
+    0.0,
+    0.02,
+    0.05
+  ]
+}
