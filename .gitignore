@@ -26,3 +26,6 @@ data/raw/**/*.csv
 data/processed/*.csv.gz
 data/processed/*.pkl
 catboost_info/
+
+# Cuotas propias del recolector (fase 4): nunca al repo
+data/odds/

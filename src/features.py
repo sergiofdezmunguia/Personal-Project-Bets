@@ -20,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src import margin as mg
 from src.dixon_coles import DixonColes
 from src.dixon_coles import monday as monday_anchor
 from src.dixon_coles import predict_walk_forward as dc_walk_forward
@@ -123,13 +124,18 @@ def dc_features(df: pd.DataFrame, decision: str, cfg: DixonColes, predict_from: 
     return p.rename(columns={"p_home": "dc_home", "p_draw": "dc_draw", "p_away": "dc_away"})
 
 
-def opening_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Apertura de Pinnacle sin margen (normalización proporcional). Solo para el ancla de apertura."""
+def opening_features(df: pd.DataFrame, method: str = "proporcional") -> pd.DataFrame:
+    """Apertura de Pinnacle sin margen (proporcional en la fase 3; Shin o potencia en la fase 4).
+    Solo para el ancla de apertura."""
     odds = df[["pin_open_home", "pin_open_draw", "pin_open_away"]].to_numpy(float, copy=True)
-    odds[~(odds > 1)] = np.nan
-    inv = 1 / odds
-    p = inv / inv.sum(axis=1, keepdims=True)
-    return pd.DataFrame(p, index=df.index, columns=["open_home", "open_draw", "open_away"])
+    return pd.DataFrame(mg.normalize(odds, method), index=df.index, columns=["open_home", "open_draw", "open_away"])
+
+
+def with_opening(X: pd.DataFrame, df: pd.DataFrame, method: str) -> pd.DataFrame:
+    """Las mismas variables de apertura con otra normalización del margen de la apertura."""
+    out = X.copy()
+    out[["open_home", "open_draw", "open_away"]] = opening_features(df, method).to_numpy()
+    return out
 
 
 def build(df: pd.DataFrame, decision: str, *, elo: Elo, pi: PiRating, dc: DixonColes,
