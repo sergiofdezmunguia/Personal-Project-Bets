@@ -10,8 +10,8 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
 - **Presupuesto máximo** si algún día se llega a la fase 5.
 - **xG mientras Understat esté en mantenimiento:** esperar o evaluar otra fuente. Bloquea la unión
   de datos de la fase 1 y la primera ejecución con datos reales.
-- **Identidad de equipo (fase 1):** las ventanas agrupan por nombre. Un nombre repetido en dos ligas
-  mezclaría historiales y un cambio de nombre los cortaría. Decidir al unir fuentes si se usa `team_id`.
+- **Renombres de equipos (fase 1):** `team_id` ya existe (ver 2026-11-14); falta revisar si algún
+  club cambió de nombre en football-data entre 2012 y 2026.
 - **Hora de decisión (antes de las fases 3 y 4):** `shift(1)` da por conocido el partido anterior y su
   xG. Decidiendo en T-48 h, con poco descanso entre partidos, ese partido aún no se habría jugado.
 - **Registro de experimentos (antes de usar datos reales):** cada ejecución calcula el `test` de
@@ -20,6 +20,16 @@ Registro de lo decidido y de lo que falta por decidir. Añade arriba lo más rec
   usa partidos de hace dos temporadas. No es una fuga, pero está sin evaluar.
 
 ## Tomadas
+
+### 2026-11-14: identidad de equipo y columnas `PP*` de 2026/27
+
+`team_id` es el nombre de football-data normalizado (`src/football_data.py`). En las 8 ligas
+descargadas ningún nombre se repite entre países y el mismo club conserva el nombre al subir o
+bajar, así que el historial no se corta. Los renombres se resolverían con `TEAM_ALIASES` (sin
+revisar aún). Las columnas `PP*` que aparecen en 2026/27 **no son Pinnacle**: su margen medio es
+del 8,3 % frente al 3,4 % de `PS*` en 2024/25 (probablemente Paddy Power). Se guardan como `pp_*`
+y nunca sirven de referencia.
+**Motivo:** confundirlas habría dado por buena una referencia con un margen de casa recreativa.
 
 ### 2026-11-06: división de desarrollo por día y 2025/26 bloqueada en el código
 

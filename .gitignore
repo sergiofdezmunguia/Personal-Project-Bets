@@ -22,3 +22,5 @@ models/*.json
 # VS Code local state
 .vscode/
 .vscode/*.code-workspace
+data/raw/**/*.csv
+data/processed/*.csv.gz
