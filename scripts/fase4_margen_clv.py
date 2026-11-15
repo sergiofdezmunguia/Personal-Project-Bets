@@ -180,16 +180,43 @@ def run_evaluation(df, n_jobs, n_boot) -> None:
     write_report(df, overall, seasons, robust, clv_res, norm, refs, h)
 
 
-def drop_best(df, preds, ok, ref) -> dict:
-    """Δ log loss frente a `ref` quitando el 1 % de partidos más favorables a cada modelo."""
+def run_robustness(df, n_jobs) -> None:
+    """Solo la tabla de robustez, sin registrar nada (comprobación posterior a la auditoría): las
+    mismas predicciones que la evaluación, que son deterministas."""
+    norm = json.loads(SELECTION.read_text())["normalizacion"]
+    sel3 = json.loads(SEL3.read_text())["seleccion"]
+    X = opening_features(df, n_jobs)
+    mask = df["season"].isin(rf.EVALUATION)
+    preds = market_preds(df, rf.EVALUATION)
+    preds["dc_apertura"] = X[["dc_home", "dc_draw", "dc_away"]].set_axis(rf.PROB, axis=1).where(mask, np.nan)
+    for meth in METHODS:
+        Xm = ft.with_opening(X, df, meth)
+        for v in RESIDUALS:
+            preds[f"{v}_{SHORT[meth]}"] = ml.walk_forward(df, Xm, v, sel3[v]["parametros"], rf.EVALUATION)
+    ok = np.logical_and.reduce([p[rf.PROB].notna().all(axis=1).to_numpy() for p in preds.values()])
+    for v, (a, b, c, d) in drop_best(df, preds, ok, mk("apertura", norm)).items():
+        print(f"| {name(v)} | {a:+.5f} | {b:+.5f} | {c:+.5f} | {d:+.5f} |")
+
+
+def drop_best(df, preds, ok, ref, n_null: int = 200, seed: int = 0) -> dict:
+    """Robustez de Δ log loss frente a `ref`: media recortada **simétrica** (sin el 0,5 % de cada cola)
+    y, como contraste, el mismo recorte asimétrico (sin el 1 % más favorable) frente a su valor bajo
+    un nulo de signo aleatorio. Quitar solo la cola favorable de una diferencia con colas gruesas sube
+    la media aunque no haya diferencia (auditoría de la fase 4), así que el asimétrico solo se lee
+    frente al nulo."""
     y = mt.outcome_index(df.loc[ok, "result"])
     base = mt.log_loss(preds[ref].loc[ok, rf.PROB].to_numpy(float), y)
+    rng = np.random.default_rng(seed)
     out = {}
     for v, p in preds.items():
         if v == ref:
             continue
-        d = np.sort(mt.log_loss(p.loc[ok, rf.PROB].to_numpy(float), y) - base)
-        out[v] = (float(d.mean()), float(d[int(len(d) * 0.01):].mean()))
+        d = mt.log_loss(p.loc[ok, rf.PROB].to_numpy(float), y) - base
+        n, k = len(d), len(d) // 200
+        srt = np.sort(d)
+        asym = float(srt[2 * k :].mean())
+        null = [np.sort(d * rng.choice([-1.0, 1.0], n))[2 * k :].mean() for _ in range(n_null)]
+        out[v] = (float(d.mean()), float(srt[k : n - k].mean()), asym, float(np.mean(null)))
     return out
 
 
@@ -218,7 +245,8 @@ def run_clv(df, X, preds, ok, norm, h, n_boot) -> dict:
             s["clv_ev_prop"] = float(alt["clv_ev"].mean()) if len(alt) else float("nan")
             if len(bets):
                 srt = np.sort(bets["clv_ev"].to_numpy())
-                s["clv_sin_1pc"] = float(srt[: len(srt) - max(1, len(srt) // 100)].mean())
+                k = len(srt) // 200  # recorte simétrico; con menos de 200 apuestas no se recorta nada
+                s["clv_sin_1pc"] = float(srt[k : len(srt) - k].mean()) if k else float("nan")
                 by = bets.assign(season=bets["event_key"].map(season)).groupby("season")["clv_ev"]
                 s["por_temporada"] = {k: [int(len(g)), round(float(g.mean()), 5)] for k, g in by}
                 s["por_resultado"] = bets.groupby("outcome").size().to_dict()
@@ -263,8 +291,9 @@ def write_report(df, overall, seasons, robust, clv_res, norm, refs, h) -> None:
     res_names = [v for v in overall["modelos"] if v.startswith("residuo")]
     srows = [[s, str(r["n"])] + [ci(r["modelos"][v]["d"][a_sel], 5) for v in res_names] for s, r in seasons.items()]
     by_season = md_table(["Temporada", "N"] + [name(v) for v in res_names], srows)
-    rrows = [[name(v), f"{a:+.5f}", f"{b:+.5f}"] for v, (a, b) in robust.items()]
-    rob = md_table(["Modelo", f"Δ vs {name(a_sel)}", "Δ sin el 1 % más favorable"], rrows)
+    rrows = [[name(v), f"{a:+.5f}", f"{b:+.5f}", f"{c:+.5f}", f"{d:+.5f}"] for v, (a, b, c, d) in robust.items()]
+    rob = md_table(["Modelo", f"Δ vs {name(a_sel)}", "Δ recortada (0,5 % por cola)", "Δ sin el 1 % más favorable",
+                    "Lo mismo bajo el nulo (signo aleatorio)"], rrows)  # fmt: skip
     crows = []
     for (v, thr), s in clv_res.items():
         if s["n"] == 0:
@@ -273,13 +302,13 @@ def write_report(df, overall, seasons, robust, clv_res, norm, refs, h) -> None:
         crows.append([name(v), f"{thr:.0%}", str(s["n"]), ci((s["clv_ev"], s["clv_ev_ic"])),
                       f"{s['clv_sin_1pc']:+.4f}", f"{s['clv_pos']:.1%}", f"{s['clv_ev_prop']:+.4f}",
                       ci((s["roi"], s["roi_ic"]))])  # fmt: skip
-    clv_t = md_table(["Modelo", "Umbral", "Apuestas", f"CLV (cierre {norm}) [IC 95 %]", "CLV sin el 1 % mejor",
+    clv_t = md_table(["Modelo", "Umbral", "Apuestas", f"CLV (cierre {norm}) [IC 95 %]", "CLV recortado (0,5 % por cola)",
                       "% CLV > 0", "CLV (cierre proporcional)", "ROI plano [IC 95 %]"], crows)  # fmt: skip
     seas_rows = []
     for (v, thr), s in clv_res.items():
         if s["n"]:
-            seas_rows.append([name(v), f"{thr:.0%}"] + [f"{s['por_temporada'].get(x, [0, float('nan')])[1]:+.4f} "
-                                                        f"({s['por_temporada'].get(x, [0])[0]})" for x in rf.EVALUATION])  # fmt: skip
+            seas_rows.append([name(v), f"{thr:.0%}"] + [(f"{s['por_temporada'][x][1]:+.4f} ({s['por_temporada'][x][0]})"
+                                                         if x in s["por_temporada"] else "—") for x in rf.EVALUATION])  # fmt: skip
     clv_s = md_table(["Modelo", "Umbral"] + rf.EVALUATION, seas_rows)
     reg = ex.read()
     n4 = sum(1 for r in reg if "fase 4" in r.get("notas", ""))
@@ -307,7 +336,10 @@ apertura que reciben (como desplazamiento y como variable).
 
 {by_season}
 
-### Robustez: quitar el 1 % de partidos más favorables
+### Robustez: recortes de la Δ partido a partido
+
+El recorte asimétrico (quitar el 1 % más favorable) se compara con su valor bajo un nulo de signo
+aleatorio: solo indica fragilidad si queda **por encima** del nulo.
 
 {rob}
 
@@ -331,7 +363,7 @@ def main(argv=None) -> int:
     from threadpoolctl import threadpool_limits
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("modo", choices=["ajuste", "evaluacion"])
+    ap.add_argument("modo", choices=["ajuste", "evaluacion", "robustez"])
     ap.add_argument("--datos", type=Path, default=RAW)
     ap.add_argument("--jobs", type=int, default=5)
     ap.add_argument("--boot", type=int, default=2000)
@@ -341,6 +373,8 @@ def main(argv=None) -> int:
         print(f"{len(df)} partidos, {df['season'].min()} → {df['season'].max()}")
         if args.modo == "ajuste":
             run_tuning(df)
+        elif args.modo == "robustez":
+            run_robustness(df, args.jobs)
         else:
             run_evaluation(df, args.jobs, args.boot)
     return 0

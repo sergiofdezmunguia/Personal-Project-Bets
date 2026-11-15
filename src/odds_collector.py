@@ -20,6 +20,7 @@ Nada de esto coloca apuestas ni usa cuentas de casas de apuestas.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -200,14 +201,16 @@ def collect_football_data(store: Store, get=http_get) -> dict:
     """Una captura de `fixtures.csv`. Con `If-Modified-Since` una repetición sin cambios es un 304."""
     src = "football-data-fixtures"
     last = store.last_version(src)
-    r = get(FD_FIXTURES, {"If-Modified-Since": last} if last else None)
+    conditional = last and not last.startswith("sha256:")  # solo una fecha HTTP vale para la cabecera
+    r = get(FD_FIXTURES, {"If-Modified-Since": last} if conditional else None)
     if r.status == 304:
         store.log_capture(src, "304", last, 0, 0)
         return {"estado": 304, "filas": 0, "nuevas": 0}
     if r.status != 200:
         store.log_capture(src, str(r.status), None, 0, 0)
         return {"estado": r.status, "filas": 0, "nuevas": 0}
-    version = r.headers.get("last-modified") or now_utc().isoformat()
+    # sin Last-Modified, la versión es la huella del contenido: repetir la misma descarga no duplica filas
+    version = r.headers.get("last-modified") or "sha256:" + hashlib.sha256(r.body).hexdigest()[:16]
     rows = parse_fd_fixtures(r.body.decode("utf-8-sig", errors="replace"), now_utc(), version)
     n_new = store.add(rows)
     store.log_capture(src, "200", version, len(rows), n_new)

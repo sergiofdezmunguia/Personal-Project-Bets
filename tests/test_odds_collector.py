@@ -136,3 +136,16 @@ def test_collected_snapshots_feed_the_clv_simulation(tmp_path):
                              method="shin", commission=0.05, max_close_gap_min=30)  # fmt: skip
     assert info["apuestas"] == 1 and bets["price"].iloc[0] == 2.30 and bets["close_price"].iloc[0] == 1.95
     assert bets["clv_ev"].iloc[0] > 0
+
+
+def test_without_last_modified_the_content_hash_keeps_it_idempotent(tmp_path):
+    st = oc.Store(tmp_path / "c.sqlite")
+    calls = []
+
+    def get(url, headers=None, timeout=30):
+        calls.append(dict(headers or {}))
+        return oc.Response(200, FIXTURES.encode("utf-8"), {})
+
+    first, second = oc.collect_football_data(st, get=get), oc.collect_football_data(st, get=get)
+    assert first["nuevas"] > 0 and second["nuevas"] == 0 and first["version"].startswith("sha256:")
+    assert calls == [{}, {}]  # nunca manda una huella como If-Modified-Since
